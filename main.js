@@ -1,7 +1,8 @@
 const core = require("@actions/core");
-const compose = require("docker-compose");
 const utils = require("./utils");
-const path = require("path");
+const { upMany, upAll, run } = require("docker-compose/dist/v2");
+
+let annotate = true; // Default annotate to true
 
 try {
   const composeFiles = utils.parseComposeFiles(
@@ -10,6 +11,8 @@ try {
   if (!composeFiles.length) {
     return;
   }
+
+  annotate = core.getInput("annotate") || true; // Override if "annotate" input is provided
 
   const services = core.getMultilineInput("services", { required: false });
 
@@ -21,9 +24,7 @@ try {
   };
 
   const promise =
-    services.length > 0
-      ? compose.upMany(services, options)
-      : compose.upAll(options);
+    services.length > 0 ? upMany(services, options) : upAll(options);
 
   promise
     .then(() => {
@@ -33,24 +34,38 @@ try {
 
       const testContainer = core.getInput("test-container");
       const testCommand = core.getInput("test-command");
-      if (testCommand && testContainer) {
-        const test = compose.exec(testContainer, testCommand, {
-          cwd: path.join(__dirname),
-          config: composeFiles,
-        });
 
-        test
-          .then(() => {
-            console.log("tests passed");
-          })
-          .catch((err) => {
-            core.setFailed(`tests failed ${JSON.stringify(err)}`);
+      console.log("testContainer", testContainer);
+      console.log("testCommand", testCommand);
+
+      if (testCommand && testContainer) {
+        setTimeout(() => {
+          const test = run(testContainer, testCommand, {
+            config: composeFiles,
           });
+
+          test
+            .then((out) => {
+              console.log(out.out);
+              console.log("tests passed");
+            })
+            .catch((err) => {
+              console.log(err.out);
+              console.log(err.err);
+              if (annotate) {
+                core.setFailed(`tests failed ${JSON.stringify(err)}`);
+              }
+            });
+        }, 10000);
       }
     })
     .catch((err) => {
-      core.setFailed(`compose up failed ${JSON.stringify(err)}`);
+      if (annotate) {
+        core.setFailed(`compose up failed ${JSON.stringify(err)}`);
+      }
     });
 } catch (error) {
-  core.setFailed(error.message);
+  if (annotate) {
+    core.setFailed(error.message);
+  }
 }
